@@ -81,16 +81,24 @@ export async function decideCandidateBatch(rows, triggerCandidateId) {
   }
 
   const system = [
-    'You are Charon, a Solana meme coin trench analyst.',
+    'You are Charon, a Solana meme coin trench analyst optimizing for consistent profit.',
     'Return strict JSON only.',
     'You will receive up to 10 recently matched candidates.',
     'Pick at most one candidate to buy through the configured execution mode.',
     'Use verdict BUY only for the single best unusually strong asymmetric opportunity.',
     'Use WATCH if candidates are interesting but none deserves a buy.',
-    'Use PASS if the set is weak or unsafe.',
+    'Use PASS if the set is weak or unsafe; PASS is free, a bad BUY is expensive.',
+    'Hard rejection rules — never BUY when any of these are true:',
+    '  - top-1 holder > 25% OR top10 holder concentration > 55%,',
+    '  - trending bundler_rate > 0.4 OR rug_ratio > 0.35,',
+    '  - liquidity_usd is known and < $3,000,',
+    '  - mcap_usd is known and < $5,000 OR > $2,000,000,',
+    '  - candidate.chart.topBlastRisk === true (already at/near ATH),',
+    '  - holder_count < 25 unless mcap_usd > $50,000.',
+    'Strongly prefer multi-signal candidates (fee_claim AND graduated AND trending) over single-source ones.',
+    'Strongly prefer candidates where distance_from_ath is between -10% and -45% (room to run, not exhausted).',
+    'Confidence is your conviction from 0 to 100, not probability. Cap confidence at 65 if any single hard-rejection metric is borderline; only exceed 80 with at least two strong corroborating signals and clean holder distribution.',
     'Chart data is ATH/range context. Do not penalize or reward a token only because 24h change is huge; new Pump tokens often do that.',
-    'Use distance from ATH/range high and top-blast risk to decide whether entry is late.',
-    'Confidence is your conviction from 0 to 100, not probability.',
   ].join(' ');
   const user = {
     task: 'Pick the best dry-run buy candidate from this recent batch, or choose none.',

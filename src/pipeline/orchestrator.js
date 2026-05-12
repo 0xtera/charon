@@ -5,7 +5,7 @@ import { storeDecision, storeBatchDecision, logDecisionEvent } from '../db/decis
 import { buildCandidate, filterCandidate, signalLabel } from './candidateBuilder.js';
 import { decideCandidateBatch } from './llm.js';
 import { activeStrategy } from '../db/settings.js';
-import { createDryRunPosition, createLivePosition, canOpenMorePositions, openPositionCount, tradingMode } from '../db/positions.js';
+import { createDryRunPosition, createLivePosition, canOpenMorePositions, openPositionCount, tradingMode, riskGuardStatus } from '../db/positions.js';
 import { sendBatchReveal, sendTelegram, sendPositionOpen, sendTradeIntent } from '../telegram/send.js';
 import { candidateSummary } from '../telegram/format.js';
 import { createTradeIntent } from '../db/intents.js';
@@ -27,6 +27,19 @@ export async function processCandidateFromSignals(signals) {
   if (!canOpenMorePositions()) {
     const max = numSetting('max_open_positions', 3);
     console.log(`[agent] max positions reached (${openPositionCount()}/${max}), skipping ${signals.mint.slice(0, 8)}...`);
+    return;
+  }
+
+  // Risk kill switch — pause new entries when loss budget or consecutive
+  // loss limit is tripped. The window auto-resets as old losses fall out
+  // of scope, so no manual reset is required.
+  const risk = riskGuardStatus();
+  if (risk.blocked) {
+    const reasons = [
+      risk.lossBudgetTripped ? `loss budget ${risk.realizedSolInWindow.toFixed(3)} SOL / -${risk.lossBudget} SOL` : null,
+      risk.consecutiveTripped ? `${risk.consecutiveLosses} consecutive losses` : null,
+    ].filter(Boolean).join(', ');
+    console.log(`[agent] risk guard active (${reasons}); skipping ${signals.mint.slice(0, 8)}...`);
     return;
   }
 
@@ -99,6 +112,20 @@ export async function processCandidateFromSignals(signals) {
         decision: batchDecision,
         action: 'entry_skipped_max_positions',
         guardrails: { maxOpenPositions: max, openPositions: openPositionCount() },
+      });
+      return;
+    }
+    const lateRisk = riskGuardStatus();
+    if (lateRisk.blocked) {
+      console.log(`[agent] risk guard tripped after LLM decision; skipping buy ${selectedRow.candidate.token.mint}`);
+      logDecisionEvent({
+        batchId,
+        triggerCandidateId: candidateId,
+        selectedRow,
+        rows,
+        decision: batchDecision,
+        action: 'entry_skipped_risk_guard',
+        guardrails: lateRisk,
       });
       return;
     }

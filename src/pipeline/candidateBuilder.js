@@ -60,6 +60,15 @@ export function filterCandidate(candidate) {
     failures.push(`market cap max: ${mcap} > ${strat.max_mcap_usd}`);
   }
 
+  // Liquidity gate — protect against entering illiquid traps where slippage
+  // and exits will be devastating. Only enforce when the candidate actually
+  // has a liquidity reading; missing values are treated as unknown to avoid
+  // false rejections on early-stage tokens with no liquidity field yet.
+  const liquidity = Number(candidate.metrics?.liquidityUsd);
+  if (Number(strat.min_liquidity_usd || 0) > 0 && Number.isFinite(liquidity) && liquidity > 0 && liquidity < Number(strat.min_liquidity_usd)) {
+    failures.push(`liquidity: $${Math.round(liquidity)} < $${strat.min_liquidity_usd}`);
+  }
+
   // GMGN fees — only enforce when GMGN data is available; Jupiter has no equivalent
   if (strat.min_gmgn_total_fee_sol > 0 && candidate.gmgn !== null && totalFees < strat.min_gmgn_total_fee_sol) {
     failures.push(`GMGN total fees: ${totalFees} < ${strat.min_gmgn_total_fee_sol}`);

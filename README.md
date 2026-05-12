@@ -152,7 +152,34 @@ Default strategies:
 - `smart_money`: stricter holder/trending quality, partial TP support.
 - `degen`: lower source threshold, rule-based (no LLM).
 
-Strategy settings are stored in SQLite and hot-read. Menu changes apply without restart.
+Strategy settings are stored in SQLite and hot-read. Menu changes apply without restart. New gate fields shipped with the bot (`min_liquidity_usd`, `rug_drop_percent`, `rug_min_hold_ms`, etc.) are automatically inherited by existing strategy rows on startup, so upgrades do not require resetting your custom strategy config.
+
+### Strategy gate fields
+
+Each strategy supports the following relevant fields beyond TP/SL/trailing:
+
+- `min_holders` / `max_top20_holder_percent`: holder distribution gates. Higher concentration usually means a single bag-holder can dump and rug the price.
+- `min_liquidity_usd`: minimum on-chain liquidity required before entering. Only enforced when a liquidity value is available; missing values are not used to reject.
+- `rug_drop_percent` / `rug_min_hold_ms`: emergency-exit thresholds. If a position's mcap drops by `rug_drop_percent` (e.g. 45%) or more from its high-water mark after at least `rug_min_hold_ms` of holding, the bot exits immediately, even before SL would normally fire. Set to `0` to disable.
+- `min_fee_claim_sol`: minimum SOL claimed by the dev as proxy for skin-in-the-game.
+- `trending_max_bundler_rate` / `trending_max_rug_ratio`: per-strategy bundler/rug guards on top of the global trending filter.
+
+## Risk Controls
+
+Charon ships with two account-level kill switches that pause new entries when losses accumulate. Both are set via `.env` (or `/setting`) and default to disabled:
+
+```env
+LOSS_BUDGET_SOL=0           # pause buys when realized PnL over window <= -this
+LOSS_BUDGET_WINDOW_MS=86400000   # 24h rolling window
+MAX_CONSECUTIVE_LOSSES=0    # pause buys after this many losing closes in a row
+```
+
+When tripped, new entries are skipped (`[agent] risk guard active ...` in the log). The loss budget self-resets as old losses roll out of the window; the consecutive loss counter resets on any profitable close.
+
+Defaults are `0` (disabled) to preserve existing behavior. Recommended starting points:
+
+- Account size 1 SOL: `LOSS_BUDGET_SOL=0.15`, `MAX_CONSECUTIVE_LOSSES=5`.
+- Account size 5 SOL: `LOSS_BUDGET_SOL=0.5`, `MAX_CONSECUTIVE_LOSSES=6`.
 
 ## Telegram Commands
 
