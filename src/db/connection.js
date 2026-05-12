@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import { DB_PATH } from '../config.js';
+import { STRATEGY_DEFAULTS } from './strategyDefaults.js';
 
 export const db = new Database(DB_PATH);
 
@@ -207,6 +208,8 @@ export function initDb() {
   ensureColumn('dry_run_positions', 'token_amount_raw', 'TEXT');
   ensureColumn('dry_run_positions', 'strategy_id', "TEXT DEFAULT 'sniper'");
   ensureColumn('dry_run_positions', 'partial_tp_done', 'INTEGER DEFAULT 0');
+  ensureColumn('dry_run_positions', 'partial_realized_sol', 'REAL DEFAULT 0');
+  ensureColumn('dry_run_positions', 'partial_sold_fraction', 'REAL DEFAULT 0');
   ensureColumn('decision_logs', 'strategy_id', 'TEXT');
 
   const defaults = {
@@ -240,141 +243,27 @@ export function initDb() {
     trending_min_swaps: process.env.TRENDING_MIN_SWAPS || '0',
     trending_max_rug_ratio: process.env.TRENDING_MAX_RUG_RATIO || '0.3',
     trending_max_bundler_rate: process.env.TRENDING_MAX_BUNDLER_RATE || '0.5',
+    // Risk-control kill switches. 0 disables. Defaults are conservative-ish.
+    loss_budget_sol: process.env.LOSS_BUDGET_SOL || '0',
+    loss_budget_window_ms: process.env.LOSS_BUDGET_WINDOW_MS || String(24 * 60 * 60 * 1000),
+    max_consecutive_losses: process.env.MAX_CONSECUTIVE_LOSSES || '0',
+    // When set, position monitor exits on a sharp mcap drop from the high
+    // water mark even if trailing has not armed yet. Strategies can override.
+    rug_drop_percent: process.env.RUG_DROP_PERCENT || '0',
+    rug_min_hold_ms: process.env.RUG_MIN_HOLD_MS || '60000',
   };
   const insert = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
   for (const [key, value] of Object.entries(defaults)) insert.run(key, value);
 
-  // Seed default strategies
+  // Seed default strategies from the shared STRATEGY_DEFAULTS map so that
+  // settings.js and this seed cannot drift.
   const stratInsert = db.prepare('INSERT OR IGNORE INTO strategies (id, name, enabled, config_json, created_at_ms) VALUES (?, ?, ?, ?, ?)');
   const ts = Date.now();
-
-  stratInsert.run('sniper', 'Sniper', 1, JSON.stringify({
-    entry_mode: 'immediate',
-    min_source_count: 2,
-    require_fee_claim: true,
-    token_age_max_ms: 3600000,
-    min_mcap_usd: 7000,
-    max_mcap_usd: 200000,
-    min_fee_claim_sol: 0.5,
-    min_gmgn_total_fee_sol: 10,
-    min_holders: 0,
-    max_top20_holder_percent: 100,
-    min_saved_wallet_holders: 0,
-    max_ath_distance_pct: 0,
-    min_graduated_volume_usd: 0,
-    trending_min_volume_usd: 0,
-    trending_min_swaps: 0,
-    trending_max_rug_ratio: 0.3,
-    trending_max_bundler_rate: 0.5,
-    position_size_sol: 0.1,
-    max_open_positions: 3,
-    tp_percent: 50,
-    sl_percent: -25,
-    trailing_enabled: true,
-    trailing_percent: 20,
-    partial_tp: false,
-    partial_tp_at_percent: 0,
-    partial_tp_sell_percent: 0,
-    max_hold_ms: 0,
-    use_llm: true,
-    llm_min_confidence: 50,
-  }), ts);
-
-  stratInsert.run('dip_buy', 'Dip Buy', 0, JSON.stringify({
-    entry_mode: 'wait_for_dip',
-    min_source_count: 1,
-    require_fee_claim: false,
-    token_age_max_ms: 86400000,
-    min_mcap_usd: 25000,
-    max_mcap_usd: 500000,
-    min_fee_claim_sol: 0,
-    min_gmgn_total_fee_sol: 0,
-    min_holders: 0,
-    max_top20_holder_percent: 100,
-    min_saved_wallet_holders: 0,
-    max_ath_distance_pct: -40,
-    min_graduated_volume_usd: 0,
-    trending_min_volume_usd: 0,
-    trending_min_swaps: 0,
-    trending_max_rug_ratio: 0.3,
-    trending_max_bundler_rate: 0.5,
-    position_size_sol: 0.05,
-    max_open_positions: 3,
-    tp_percent: 30,
-    sl_percent: -20,
-    trailing_enabled: true,
-    trailing_percent: 15,
-    partial_tp: false,
-    partial_tp_at_percent: 0,
-    partial_tp_sell_percent: 0,
-    max_hold_ms: 0,
-    use_llm: true,
-    llm_min_confidence: 60,
-  }), ts);
-
-  stratInsert.run('smart_money', 'Smart Money', 0, JSON.stringify({
-    entry_mode: 'immediate',
-    min_source_count: 2,
-    require_fee_claim: false,
-    token_age_max_ms: 86400000,
-    min_mcap_usd: 10000,
-    max_mcap_usd: 1000000,
-    min_fee_claim_sol: 0,
-    min_gmgn_total_fee_sol: 0,
-    min_holders: 1000,
-    max_top20_holder_percent: 50,
-    min_saved_wallet_holders: 0,
-    max_ath_distance_pct: 0,
-    min_graduated_volume_usd: 0,
-    trending_min_volume_usd: 5000,
-    trending_min_swaps: 100,
-    trending_max_rug_ratio: 0.2,
-    trending_max_bundler_rate: 0.3,
-    position_size_sol: 0.1,
-    max_open_positions: 3,
-    tp_percent: 100,
-    sl_percent: -25,
-    trailing_enabled: false,
-    trailing_percent: 0,
-    partial_tp: true,
-    partial_tp_at_percent: 100,
-    partial_tp_sell_percent: 50,
-    max_hold_ms: 0,
-    use_llm: true,
-    llm_min_confidence: 70,
-  }), ts);
-
-  stratInsert.run('degen', 'Degen', 0, JSON.stringify({
-    entry_mode: 'immediate',
-    min_source_count: 1,
-    require_fee_claim: false,
-    token_age_max_ms: 3600000,
-    min_mcap_usd: 5000,
-    max_mcap_usd: 100000,
-    min_fee_claim_sol: 0,
-    min_gmgn_total_fee_sol: 0,
-    min_holders: 0,
-    max_top20_holder_percent: 100,
-    min_saved_wallet_holders: 0,
-    max_ath_distance_pct: 0,
-    min_graduated_volume_usd: 0,
-    trending_min_volume_usd: 0,
-    trending_min_swaps: 0,
-    trending_max_rug_ratio: 0.5,
-    trending_max_bundler_rate: 0.7,
-    position_size_sol: 0.05,
-    max_open_positions: 5,
-    tp_percent: 30,
-    sl_percent: -15,
-    trailing_enabled: true,
-    trailing_percent: 10,
-    partial_tp: false,
-    partial_tp_at_percent: 0,
-    partial_tp_sell_percent: 0,
-    max_hold_ms: 0,
-    use_llm: false,
-    llm_min_confidence: 0,
-  }), ts);
+  const strategyNames = { sniper: 'Sniper', dip_buy: 'Dip Buy', smart_money: 'Smart Money', degen: 'Degen' };
+  const strategyEnabled = { sniper: 1, dip_buy: 0, smart_money: 0, degen: 0 };
+  for (const [id, config] of Object.entries(STRATEGY_DEFAULTS)) {
+    stratInsert.run(id, strategyNames[id] || id, strategyEnabled[id] || 0, JSON.stringify(config), ts);
+  }
 }
 
 export function ensureColumn(table, column, ddl) {

@@ -17,6 +17,57 @@ export function canOpenMorePositions() {
   return openPositionCount() < max;
 }
 
+export function realizedPnlSolInWindow(windowMs, { mode = null } = {}) {
+  const cutoff = now() - Math.max(0, Number(windowMs) || 0);
+  const params = [cutoff];
+  let modeClause = '';
+  if (mode) {
+    modeClause = ' AND COALESCE(execution_mode, ?) = ?';
+    params.push(mode, mode);
+  }
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(pnl_sol), 0) AS pnl
+    FROM dry_run_positions
+    WHERE status = 'closed' AND closed_at_ms >= ?${modeClause}
+  `).get(...params);
+  return Number(row?.pnl || 0);
+}
+
+export function consecutiveLossCount({ limit = 50 } = {}) {
+  const rows = db.prepare(`
+    SELECT pnl_sol FROM dry_run_positions
+    WHERE status = 'closed'
+    ORDER BY closed_at_ms DESC
+    LIMIT ?
+  `).all(Number(limit) || 50);
+  let count = 0;
+  for (const row of rows) {
+    if (Number(row.pnl_sol || 0) < 0) count += 1;
+    else break;
+  }
+  return count;
+}
+
+export function riskGuardStatus() {
+  const lossBudget = numSetting('loss_budget_sol', 0);
+  const windowMs = numSetting('loss_budget_window_ms', 24 * 60 * 60 * 1000);
+  const maxConsec = numSetting('max_consecutive_losses', 0);
+  const realized = lossBudget > 0 ? realizedPnlSolInWindow(windowMs) : 0;
+  const consec = maxConsec > 0 ? consecutiveLossCount() : 0;
+  const lossBudgetTripped = lossBudget > 0 && (-realized) >= lossBudget;
+  const consecutiveTripped = maxConsec > 0 && consec >= maxConsec;
+  return {
+    blocked: lossBudgetTripped || consecutiveTripped,
+    lossBudgetTripped,
+    consecutiveTripped,
+    lossBudget,
+    realizedSolInWindow: realized,
+    windowMs,
+    maxConsecutiveLosses: maxConsec,
+    consecutiveLosses: consec,
+  };
+}
+
 export function tradingMode() {
   const mode = setting('trading_mode', 'dry_run');
   return ['dry_run', 'confirm', 'live'].includes(mode) ? mode : 'dry_run';

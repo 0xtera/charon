@@ -1,4 +1,5 @@
 import { db } from './connection.js';
+import { STRATEGY_DEFAULTS, strategyConfigWithDefaults } from './strategyDefaults.js';
 
 export function setting(key, fallback = '') {
   return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? fallback;
@@ -23,6 +24,17 @@ export function numSetting(key, fallback = 0) {
 
 const strategyCache = { id: null, config: null, at: 0 };
 
+function parseStrategyRow(row) {
+  if (!row) return null;
+  let stored = {};
+  try {
+    stored = JSON.parse(row.config_json) || {};
+  } catch {
+    stored = {};
+  }
+  return { id: row.id, name: row.name, ...strategyConfigWithDefaults(row.id, stored) };
+}
+
 export function activeStrategy() {
   if (strategyCache.config && Date.now() - strategyCache.at < 5000) return strategyCache.config;
   const row = db.prepare('SELECT * FROM strategies WHERE enabled = 1 LIMIT 1').get();
@@ -31,7 +43,7 @@ export function activeStrategy() {
     if (fallback) return fallback;
     return defaultStrategy();
   }
-  const config = { id: row.id, name: row.name, ...JSON.parse(row.config_json) };
+  const config = parseStrategyRow(row);
   strategyCache.id = row.id;
   strategyCache.config = config;
   strategyCache.at = Date.now();
@@ -40,16 +52,13 @@ export function activeStrategy() {
 
 export function strategyById(id) {
   const row = db.prepare('SELECT * FROM strategies WHERE id = ?').get(id);
-  if (!row) return null;
-  return { id: row.id, name: row.name, ...JSON.parse(row.config_json) };
+  return parseStrategyRow(row);
 }
 
 export function allStrategies() {
   return db.prepare('SELECT * FROM strategies ORDER BY id').all().map(row => ({
-    id: row.id,
-    name: row.name,
+    ...parseStrategyRow(row),
     enabled: Boolean(row.enabled),
-    ...JSON.parse(row.config_json),
   }));
 }
 
@@ -75,17 +84,6 @@ export function strategySetting(key, fallback) {
 }
 
 function defaultStrategy() {
-  return {
-    id: 'sniper', name: 'Sniper',
-    entry_mode: 'immediate', min_source_count: 2, require_fee_claim: true,
-    token_age_max_ms: 3600000, min_mcap_usd: 7000, max_mcap_usd: 200000,
-    min_fee_claim_sol: 0.5, min_gmgn_total_fee_sol: 10, min_holders: 0,
-    max_top20_holder_percent: 100, min_saved_wallet_holders: 0, max_ath_distance_pct: 0,
-    min_graduated_volume_usd: 0, trending_min_volume_usd: 0, trending_min_swaps: 0,
-    trending_max_rug_ratio: 0.3, trending_max_bundler_rate: 0.5,
-    position_size_sol: 0.1, max_open_positions: 3,
-    tp_percent: 50, sl_percent: -25, trailing_enabled: true, trailing_percent: 20,
-    partial_tp: false, partial_tp_at_percent: 0, partial_tp_sell_percent: 0,
-    max_hold_ms: 0, use_llm: true, llm_min_confidence: 50,
-  };
+  return { id: 'sniper', name: 'Sniper', ...STRATEGY_DEFAULTS.sniper };
 }
+
